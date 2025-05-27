@@ -1,0 +1,415 @@
+import React, { useState, useRef, useCallback } from 'react';
+import { Upload, Settings, Calculator, RotateCcw } from 'lucide-react';
+
+const AbaqueReader = () => {
+  const [image, setImage] = useState(null);
+  const [calibration, setCalibration] = useState({
+    xMin: null, xMax: null, yMin: null, yMax: null,
+    xMinValue: 0, xMaxValue: 0.08, yMinValue: 0, yMaxValue: 12000
+  });
+  const [calibrationStep, setCalibrationStep] = useState('none');
+  const [curves, setCurves] = useState([]);
+  const [parameters, setParameters] = useState({
+    twD: 0.021,
+    ePrime: 0.5
+  });
+  const [result, setResult] = useState(null);
+  const canvasRef = useRef(null);
+  const imageRef = useRef(null);
+
+  // Courbes prédéfinies pour E' (approximation des courbes du graphique)
+  const predefinedCurves = {
+    0.2: [
+      {x: 0.005, y: 11800}, {x: 0.01, y: 7500}, {x: 0.015, y: 5200}, 
+      {x: 0.02, y: 3800}, {x: 0.025, y: 2900}, {x: 0.03, y: 2300},
+      {x: 0.035, y: 1900}, {x: 0.04, y: 1600}, {x: 0.05, y: 1200},
+      {x: 0.06, y: 950}, {x: 0.07, y: 750}, {x: 0.08, y: 600}
+    ],
+    0.5: [
+      {x: 0.005, y: 7800}, {x: 0.01, y: 4900}, {x: 0.015, y: 3400}, 
+      {x: 0.02, y: 2650}, {x: 0.025, y: 2100}, {x: 0.03, y: 1750},
+      {x: 0.035, y: 1450}, {x: 0.04, y: 1250}, {x: 0.05, y: 950},
+      {x: 0.06, y: 750}, {x: 0.07, y: 600}, {x: 0.08, y: 500}
+    ],
+    1.0: [
+      {x: 0.005, y: 6200}, {x: 0.01, y: 3900}, {x: 0.015, y: 2800}, 
+      {x: 0.02, y: 2200}, {x: 0.025, y: 1800}, {x: 0.03, y: 1500},
+      {x: 0.035, y: 1250}, {x: 0.04, y: 1100}, {x: 0.05, y: 850},
+      {x: 0.06, y: 680}, {x: 0.07, y: 550}, {x: 0.08, y: 450}
+    ],
+    2.0: [
+      {x: 0.005, y: 4800}, {x: 0.01, y: 3100}, {x: 0.015, y: 2300}, 
+      {x: 0.02, y: 1850}, {x: 0.025, y: 1550}, {x: 0.03, y: 1300},
+      {x: 0.035, y: 1100}, {x: 0.04, y: 980}, {x: 0.05, y: 780},
+      {x: 0.06, y: 630}, {x: 0.07, y: 520}, {x: 0.08, y: 430}
+    ]
+  };
+
+  const handleImageUpload = (event) => {
+    const file = event.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setImage(e.target.result);
+        setCalibrationStep('ready');
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const drawImageOnCanvas = useCallback(() => {
+    if (!image) return;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+    img.onload = () => {
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx.drawImage(img, 0, 0);
+      
+      // Dessiner les points de calibration
+      ctx.fillStyle = 'red';
+      ctx.strokeStyle = 'red';
+      ctx.lineWidth = 2;
+      
+      if (calibration.xMin) {
+        ctx.beginPath();
+        ctx.arc(calibration.xMin.x, calibration.xMin.y, 5, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.fillText(`X Min (${calibration.xMinValue})`, calibration.xMin.x + 10, calibration.xMin.y - 10);
+      }
+      
+      if (calibration.xMax) {
+        ctx.beginPath();
+        ctx.arc(calibration.xMax.x, calibration.xMax.y, 5, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.fillText(`X Max (${calibration.xMaxValue})`, calibration.xMax.x + 10, calibration.xMax.y - 10);
+      }
+      
+      if (calibration.yMin) {
+        ctx.beginPath();
+        ctx.arc(calibration.yMin.x, calibration.yMin.y, 5, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.fillText(`Y Min (${calibration.yMinValue})`, calibration.yMin.x + 10, calibration.yMin.y - 10);
+      }
+      
+      if (calibration.yMax) {
+        ctx.beginPath();
+        ctx.arc(calibration.yMax.x, calibration.yMax.y, 5, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.fillText(`Y Max (${calibration.yMaxValue})`, calibration.yMax.x + 10, calibration.yMax.y - 10);
+      }
+    };
+    img.src = image;
+  }, [image, calibration]);
+
+  React.useEffect(() => {
+    drawImageOnCanvas();
+  }, [drawImageOnCanvas]);
+
+  const handleCanvasClick = (event) => {
+    if (calibrationStep === 'none' || calibrationStep === 'ready') return;
+    
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    
+    const newCalibration = { ...calibration };
+    
+    switch (calibrationStep) {
+      case 'xMin':
+        newCalibration.xMin = { x, y };
+        setCalibrationStep('xMax');
+        break;
+      case 'xMax':
+        newCalibration.xMax = { x, y };
+        setCalibrationStep('yMin');
+        break;
+      case 'yMin':
+        newCalibration.yMin = { x, y };
+        setCalibrationStep('yMax');
+        break;
+      case 'yMax':
+        newCalibration.yMax = { x, y };
+        setCalibrationStep('complete');
+        break;
+    }
+    
+    setCalibration(newCalibration);
+  };
+
+  const startCalibration = () => {
+    setCalibrationStep('xMin');
+  };
+
+  const resetCalibration = () => {
+    setCalibration({
+      xMin: null, xMax: null, yMin: null, yMax: null,
+      xMinValue: 0, xMaxValue: 0.08, yMinValue: 0, yMaxValue: 12000
+    });
+    setCalibrationStep('ready');
+  };
+
+  const interpolateValue = (x, curve) => {
+    // Trouver les deux points encadrant x
+    for (let i = 0; i < curve.length - 1; i++) {
+      if (x >= curve[i].x && x <= curve[i + 1].x) {
+        const x1 = curve[i].x;
+        const y1 = curve[i].y;
+        const x2 = curve[i + 1].x;
+        const y2 = curve[i + 1].y;
+        
+        // Interpolation linéaire
+        const y = y1 + (y2 - y1) * (x - x1) / (x2 - x1);
+        return y;
+      }
+    }
+    
+    // Si x est en dehors de la plage, extrapoler
+    if (x < curve[0].x) return curve[0].y;
+    if (x > curve[curve.length - 1].x) return curve[curve.length - 1].y;
+    
+    return null;
+  };
+
+  const calculateResult = () => {
+    const { twD, ePrime } = parameters;
+    
+    // Trouver la courbe correspondante
+    const availableValues = Object.keys(predefinedCurves).map(k => parseFloat(k)).sort();
+    let selectedCurve = null;
+    
+    // Trouver la courbe exacte ou la plus proche
+    if (predefinedCurves[ePrime]) {
+      selectedCurve = predefinedCurves[ePrime];
+    } else {
+      // Interpolation entre deux courbes si nécessaire
+      let lowerValue = null;
+      let upperValue = null;
+      
+      for (let value of availableValues) {
+        if (value <= ePrime) lowerValue = value;
+        if (value >= ePrime && upperValue === null) upperValue = value;
+      }
+      
+      if (lowerValue !== null && upperValue !== null) {
+        // Interpolation entre deux courbes
+        const lowerCurve = predefinedCurves[lowerValue];
+        const upperCurve = predefinedCurves[upperValue];
+        const factor = (ePrime - lowerValue) / (upperValue - lowerValue);
+        
+        selectedCurve = lowerCurve.map((point, index) => ({
+          x: point.x,
+          y: point.y + factor * (upperCurve[index].y - point.y)
+        }));
+      } else if (lowerValue !== null) {
+        selectedCurve = predefinedCurves[lowerValue];
+      } else if (upperValue !== null) {
+        selectedCurve = predefinedCurves[upperValue];
+      }
+    }
+    
+    if (selectedCurve) {
+      const khe = interpolateValue(twD, selectedCurve);
+      setResult({
+        khe: Math.round(khe),
+        twD,
+        ePrime,
+        curveUsed: ePrime
+      });
+    }
+  };
+
+  return (
+    <div className="max-w-6xl mx-auto p-6 bg-white">
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold text-gray-800 mb-2">
+          Lecteur d'Abaque - Stiffness Factor K<sub>He</sub>
+        </h1>
+        <p className="text-gray-600">
+          Application pour automatiser la lecture de l'abaque de facteur de rigidité
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Section Upload et Calibration */}
+        <div className="space-y-4">
+          <div className="bg-gray-50 p-4 rounded-lg">
+            <h2 className="text-xl font-semibold mb-3 flex items-center">
+              <Upload className="mr-2" size={20} />
+              1. Charger l'abaque
+            </h2>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={handleImageUpload}
+              className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+            />
+          </div>
+
+          {image && (
+            <div className="bg-gray-50 p-4 rounded-lg">
+              <h2 className="text-xl font-semibold mb-3 flex items-center">
+                <Settings className="mr-2" size={20} />
+                2. Calibrer les axes
+              </h2>
+              
+              <div className="space-y-2 mb-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">X Min</label>
+                    <input
+                      type="number"
+                      step="0.001"
+                      value={calibration.xMinValue}
+                      onChange={(e) => setCalibration({...calibration, xMinValue: parseFloat(e.target.value)})}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">X Max</label>
+                    <input
+                      type="number"
+                      step="0.001"
+                      value={calibration.xMaxValue}
+                      onChange={(e) => setCalibration({...calibration, xMaxValue: parseFloat(e.target.value)})}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Y Min</label>
+                    <input
+                      type="number"
+                      step="100"
+                      value={calibration.yMinValue}
+                      onChange={(e) => setCalibration({...calibration, yMinValue: parseFloat(e.target.value)})}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">Y Max</label>
+                    <input
+                      type="number"
+                      step="100"
+                      value={calibration.yMaxValue}
+                      onChange={(e) => setCalibration({...calibration, yMaxValue: parseFloat(e.target.value)})}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex space-x-2 mb-4">
+                {calibrationStep === 'ready' && (
+                  <button
+                    onClick={startCalibration}
+                    className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+                  >
+                    Commencer la calibration
+                  </button>
+                )}
+                <button
+                  onClick={resetCalibration}
+                  className="bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600 flex items-center"
+                >
+                  <RotateCcw className="mr-1" size={16} />
+                  Reset
+                </button>
+              </div>
+
+              {calibrationStep !== 'none' && calibrationStep !== 'ready' && (
+                <div className="bg-yellow-100 p-3 rounded">
+                  <p className="text-yellow-800">
+                    {calibrationStep === 'xMin' && 'Cliquez sur le point X minimum (origine)'}
+                    {calibrationStep === 'xMax' && 'Cliquez sur le point X maximum (0.08)'}
+                    {calibrationStep === 'yMin' && 'Cliquez sur le point Y minimum (0)'}
+                    {calibrationStep === 'yMax' && 'Cliquez sur le point Y maximum (12000)'}
+                    {calibrationStep === 'complete' && 'Calibration terminée !'}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Section Paramètres */}
+          <div className="bg-gray-50 p-4 rounded-lg">
+            <h2 className="text-xl font-semibold mb-3 flex items-center">
+              <Calculator className="mr-2" size={20} />
+              3. Paramètres de calcul
+            </h2>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  t<sub>w</sub>/D (Wall thickness to diameter ratio)
+                </label>
+                <input
+                  type="number"
+                  step="0.001"
+                  value={parameters.twD}
+                  onChange={(e) => setParameters({...parameters, twD: parseFloat(e.target.value)})}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  E' (ksi) - Modulus of soil reaction
+                </label>
+                <select
+                  value={parameters.ePrime}
+                  onChange={(e) => setParameters({...parameters, ePrime: parseFloat(e.target.value)})}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                >
+                  <option value={0.2}>0.2 ksi</option>
+                  <option value={0.5}>0.5 ksi</option>
+                  <option value={1.0}>1.0 ksi</option>
+                  <option value={2.0}>2.0 ksi</option>
+                </select>
+              </div>
+            </div>
+
+            <button
+              onClick={calculateResult}
+              className="mt-4 w-full bg-green-500 text-white py-2 px-4 rounded hover:bg-green-600"
+            >
+              Calculer K<sub>He</sub>
+            </button>
+          </div>
+
+          {/* Résultats */}
+          {result && (
+            <div className="bg-green-50 p-4 rounded-lg border-2 border-green-200">
+              <h3 className="text-lg font-semibold text-green-800 mb-2">Résultats</h3>
+              <div className="space-y-2">
+                <p><strong>t<sub>w</sub>/D:</strong> {result.twD}</p>
+                <p><strong>E':</strong> {result.ePrime} ksi</p>
+                <p className="text-xl"><strong>K<sub>He</sub> = {result.khe} psi</strong></p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Section Image */}
+        <div className="space-y-4">
+          {image && (
+            <div className="bg-gray-50 p-4 rounded-lg">
+              <h2 className="text-xl font-semibold mb-3">Aperçu de l'abaque</h2>
+              <div className="border rounded overflow-hidden">
+                <canvas
+                  ref={canvasRef}
+                  onClick={handleCanvasClick}
+                  className="max-w-full h-auto cursor-crosshair"
+                  style={{ maxHeight: '600px' }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default AbaqueReader;
